@@ -3,11 +3,12 @@ use aws_lambda_events::encodings::Body;
 use ed25519_dalek::{PublicKey, Signature, Verifier};
 use http::HeaderMap;
 use lamedh_http::{
-    lambda::{lambda, Context},
+    lambda::{run, Context},
     IntoResponse, Request,
 };
 use lazy_static::lazy_static;
 use std::env;
+use tracing::{info, instrument};
 
 type Error =
     Box<dyn std::error::Error + Send + Sync + 'static>;
@@ -23,13 +24,21 @@ lazy_static! {
     .expect("Couldn't create a PublicKey from DISCORD_PUBLIC_KEY bytes");
 }
 
-#[lambda(http)]
 #[tokio::main]
-async fn main(
+async fn main() -> Result<(), Error> {
+    let my_subscriber = tracing_subscriber::fmt().finish();
+    tracing::subscriber::set_global_default(my_subscriber)
+        .expect("setting tracing default failed");
+
+    run(lamedh_http::handler(handler)).await?;
+    Ok(())
+}
+#[instrument]
+async fn handler(
     event: Request,
     _: Context,
 ) -> Result<impl IntoResponse, Error> {
-    dbg!("in main");
+    info!("in handler");
     validate_discord_signature(
         event.headers(),
         event.body(),
@@ -45,6 +54,7 @@ async fn main(
 /// This is required because discord will send you a ping when
 /// you set up your webhook URL, as well as random invalid input
 /// periodically that has to be rejected.
+#[instrument(skip(headers, body, pub_key), err)]
 pub fn validate_discord_signature(
     headers: &HeaderMap,
     body: &Body,
