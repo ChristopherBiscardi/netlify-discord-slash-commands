@@ -7,6 +7,8 @@ use lamedh_http::{
     IntoResponse, Request,
 };
 use lazy_static::lazy_static;
+use serde::Deserialize;
+use serde_repr::Deserialize_repr;
 use std::env;
 use tracing::{info, instrument};
 
@@ -44,6 +46,9 @@ async fn handler(
         event.body(),
         &PUB_KEY,
     )?;
+    let interaction: Interaction =
+        serde_json::from_slice(event.body())?;
+    dbg!(interaction);
     Ok("boop")
 }
 
@@ -98,4 +103,17 @@ pub fn validate_discord_signature(
     } else {
         Err(anyhow!("Invalid body type"))
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct Interaction {
+    #[serde(rename = "type")]
+    event_type: InteractionType,
+}
+
+#[derive(Deserialize_repr, Debug)]
+#[repr(u8)]
+pub enum InteractionType {
+    Ping = 1,
+    ApplicationCommand = 2,
 }
