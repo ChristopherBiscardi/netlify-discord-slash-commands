@@ -1,14 +1,16 @@
 use anyhow::{anyhow, Context as C};
 use aws_lambda_events::encodings::Body;
 use ed25519_dalek::{PublicKey, Signature, Verifier};
-use http::HeaderMap;
+use http::{
+    header::CONTENT_TYPE, HeaderMap, Response, StatusCode,
+};
 use lamedh_http::{
     lambda::{run, Context},
     IntoResponse, Request,
 };
 use lazy_static::lazy_static;
-use serde::Deserialize;
-use serde_repr::Deserialize_repr;
+use serde::{Deserialize, Serialize};
+use serde_repr::{Deserialize_repr, Serialize_repr};
 use std::env;
 use tracing::{info, instrument};
 
@@ -35,21 +37,39 @@ async fn main() -> Result<(), Error> {
     run(lamedh_http::handler(handler)).await?;
     Ok(())
 }
+
 #[instrument]
 async fn handler(
     event: Request,
     _: Context,
 ) -> Result<impl IntoResponse, Error> {
     info!("in handler");
-    validate_discord_signature(
+    if let Err(_) = validate_discord_signature(
         event.headers(),
         event.body(),
         &PUB_KEY,
-    )?;
+    ) {
+        return Ok(Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(Body::Text(
+                "invalid request signature".to_string(),
+            ))
+            .expect("response builder failed"));
+    };
+
     let interaction: Interaction =
         serde_json::from_slice(event.body())?;
-    dbg!(interaction);
-    Ok("boop")
+    match interaction.interaction_type {
+        InteractionType::Ping => Ok(InteractionResponse {
+            interaction_response_type:
+                InteractionResponseType::Pong,
+            data: None,
+        }
+        .into_response()),
+        InteractionType::ApplicationCommand => {
+            todo!("implement ApplicationCommand")
+        }
+    }
 }
 
 /// Verify the discord signature using your application's publickey,
@@ -108,7 +128,7 @@ pub fn validate_discord_signature(
 #[derive(Debug, Deserialize)]
 struct Interaction {
     #[serde(rename = "type")]
-    event_type: InteractionType,
+    interaction_type: InteractionType,
 }
 
 #[derive(Deserialize_repr, Debug)]
@@ -116,4 +136,43 @@ struct Interaction {
 pub enum InteractionType {
     Ping = 1,
     ApplicationCommand = 2,
+}
+
+#[derive(Serialize, Debug)]
+struct InteractionResponse {
+    #[serde(rename = "type")]
+    interaction_response_type: InteractionResponseType,
+    data: Option<InteractionApplicationCommandCallbackData>,
+}
+
+impl IntoResponse for InteractionResponse {
+    fn into_response(self) -> Response<Body> {
+        Response::builder()
+            .header(CONTENT_TYPE, "application/json")
+            .body(
+                serde_json::to_string(&self)
+                    .expect("unable to serialize serde_json::Value")
+                    .into(),
+            )
+            .expect("unable to build http::Response")
+    }
+}
+
+#[derive(Serialize_repr, Debug)]
+#[repr(u8)]
+pub enum InteractionResponseType {
+    Pong = 1,
+    // Acknowledge = 2,
+    // ChannelMessage = 3,
+    ChannelMessageWithSource = 4,
+    ACKWithSource = 5,
+}
+
+#[derive(Serialize, Debug)]
+struct InteractionApplicationCommandCallbackData {
+    tts: Option<bool>,
+    content: Option<String>,
+    // embeds
+    // allowed_mentions
+    flags: Option<usize>,
 }
