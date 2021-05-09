@@ -81,14 +81,11 @@ async fn handler(
                     );
                     match name.as_str() {
                         "role" => {
-                            Ok(InteractionResponse{
-                                interaction_response_type: InteractionResponseType::ChannelMessageWithSource,
-                                data: Some(InteractionApplicationCommandCallbackData {
-                                    tts: None,
-                                    content: Some("received role command".to_string()),
-                                    flags: None
-                                })
-                            }.into_response())
+                            Ok(InteractionResponse::reply(
+                                "received role command"
+                                    .to_string(),
+                            )
+                            .into_response())
                         }
                         _ => {
                             error!(
@@ -97,14 +94,7 @@ async fn handler(
                                 ?options,
                                 "unknown command"
                             );
-                            Ok(InteractionResponse{
-                                interaction_response_type: InteractionResponseType::ChannelMessageWithSource,
-                                data: Some(InteractionApplicationCommandCallbackData{
-                                    tts: None,
-                                    content: Some(format!("received unknown command: {}", name)),
-                                    flags: None
-                                })
-                            }.into_response())
+                            Ok(InteractionResponse::reply(format!("received unknown command: {}", name)).into_response())
                         }
                     }
                 }
@@ -114,13 +104,7 @@ async fn handler(
                         ?interaction,
                         "something is wrong"
                     );
-                    Ok(InteractionResponse{ interaction_response_type: InteractionResponseType::ChannelMessageWithSource,
-                        data: Some(InteractionApplicationCommandCallbackData{
-                            tts: None,
-                            content: Some("Something went wrong when processing interaction".to_string()),
-                            flags: None
-                        })
-                    }.into_response())
+                    Ok(InteractionResponse::reply("Something went wrong when processing interaction".to_string()).into_response())
                 }
             }
         }
@@ -235,6 +219,19 @@ struct InteractionResponse {
     #[serde(rename = "type")]
     interaction_response_type: InteractionResponseType,
     data: Option<InteractionApplicationCommandCallbackData>,
+}
+
+impl InteractionResponse {
+    fn reply(content: String) -> InteractionResponse {
+        InteractionResponse{
+            interaction_response_type: InteractionResponseType::ChannelMessageWithSource,
+            data: Some(InteractionApplicationCommandCallbackData {
+                tts: None,
+                content: Some(content),
+                flags: None
+            })
+        }
+    }
 }
 
 impl IntoResponse for InteractionResponse {
