@@ -11,11 +11,18 @@ use lamedh_http::{
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
-use std::env;
+use std::{collections::HashMap, env};
 use tracing::{error, info, instrument};
 
 type Error =
     Box<dyn std::error::Error + Send + Sync + 'static>;
+
+const DISCORD_API: &str = "https://discord.com/api/v9";
+const USER_AGENT: &str = concat!(
+	"DiscordBot (https://github.com/partycorgi/discord-slash-commands, ",
+	env!("CARGO_PKG_VERSION"),
+	")"
+);
 
 lazy_static! {
     static ref PUB_KEY: PublicKey = PublicKey::from_bytes(
@@ -26,6 +33,13 @@ lazy_static! {
         .expect("Couldn't hex::decode the DISCORD_PUBLIC_KEY")
     )
     .expect("Couldn't create a PublicKey from DISCORD_PUBLIC_KEY bytes");
+    static ref DISCORD_BOT_TOKEN: String = env::var("DISCORD_BOT_TOKEN")
+        .expect("Expected a DISCORD_BOT_TOKEN");
+static ref ROLE_REVERSE_MAP: HashMap<&'static str, &'static str> = {
+    let mut map = HashMap::new();
+    map.insert("837304749312180285", "corgi");
+    map
+};
 }
 
 #[tokio::main]
@@ -81,11 +95,54 @@ async fn handler(
                     );
                     match name.as_str() {
                         "role" => {
-                            Ok(InteractionResponse::reply(
-                                "received role command"
-                                    .to_string(),
-                            )
-                            .into_response())
+                            let maybe_user = &interaction
+                                .member
+                                .map(|member| member.user);
+                            let maybe_guild_id =
+                                interaction.guild_id;
+                            let maybe_role = options
+                                .and_then(|options| {
+                                    options
+                                        .iter()
+                                        .find(|option| {
+                                            option.name == "i-want-to-be-a"
+                                        }).and_then(|v|{
+                                            v.value.clone()
+                                        })
+                                });
+                            match (
+                                maybe_user,
+                                maybe_guild_id,
+                                maybe_role,
+                            ) {
+                                (
+                                    Some(user),
+                                    Some(guild_id),
+                                    Some(role),
+                                ) => {
+                                    let response = set_role_for_user_in_guild(
+                                    role, &user, guild_id,
+                                )
+                                .await;
+                                    Ok(response
+                                        .into_response())
+                                }
+                                (
+                                    maybe_user,
+                                    maybe_guild_id,
+                                    maybe_role,
+                                ) => {
+                                    error!(?maybe_user,
+                                    ?maybe_guild_id,
+                                    ?maybe_role,
+                                    "necessary information was not available");
+                                    Ok(InteractionResponse::reply(
+                                    "received role command"
+                                        .to_string(),
+                                )
+                                .into_response())
+                                }
+                            }
                         }
                         _ => {
                             error!(
@@ -106,6 +163,62 @@ async fn handler(
                     );
                     Ok(InteractionResponse::reply("Something went wrong when processing interaction".to_string()).into_response())
                 }
+            }
+        }
+    }
+}
+
+async fn set_role_for_user_in_guild<T: AsRef<str>>(
+    role: T,
+    user: &User,
+    guild_id: Snowflake,
+) -> InteractionResponse {
+    let client = reqwest::Client::new();
+    let res = client
+        .put(&format!(
+            "{}/guilds/{}/members/{}/roles/{}",
+            DISCORD_API,
+            guild_id,
+            user.id,
+            role.as_ref()
+        ))
+        .header("User-Agent", USER_AGENT)
+        .header(
+            "Authorization",
+            format!("Bot {}", DISCORD_BOT_TOKEN.clone()),
+        )
+        .send()
+        .await;
+
+    match res {
+        Err(e) => {
+            error!(error = ?e);
+            InteractionResponse::reply(format!(
+                "failed to set role for {}",
+                user.username
+            ))
+        }
+        Ok(response) => {
+            if response.status().is_success() {
+                match ROLE_REVERSE_MAP.get(role.as_ref()) {
+                    Some(name) => {
+                        InteractionResponse::reply(format!(
+                            "{} has accepted the {} role",
+                            user.username, name
+                        ))
+                    }
+                    None => {
+                        InteractionResponse::reply(format!(
+                            "{} has accepted a role",
+                            user.username
+                        ))
+                    }
+                }
+            } else {
+                InteractionResponse::reply(format!(
+                    "Failed with status code {}",
+                    response.status()
+                ))
             }
         }
     }
@@ -169,8 +282,29 @@ struct Interaction {
     #[serde(rename = "type")]
     interaction_type: InteractionType,
     data: Option<ApplicationCommandInteractionData>,
+    guild_id: Option<Snowflake>,
+    channel_id: Option<Snowflake>,
+    member: Option<GuildMember>,
+    token: String,
+    version: usize,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct GuildMember {
+    pub deaf: bool,
+    pub nick: Option<String>,
+    pub roles: Vec<String>,
+    /// Attached User struct.
+    pub user: User,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct User {
+    pub id: Snowflake,
+    pub avatar: Option<String>,
+    pub bot: Option<bool>,
+    pub discriminator: String,
+    pub username: String,
+}
 #[derive(Deserialize_repr, Debug)]
 #[repr(u8)]
 pub enum InteractionType {
