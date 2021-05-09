@@ -12,7 +12,7 @@ use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
 use std::env;
-use tracing::{info, instrument};
+use tracing::{error, info, instrument};
 
 type Error =
     Box<dyn std::error::Error + Send + Sync + 'static>;
@@ -67,7 +67,62 @@ async fn handler(
         }
         .into_response()),
         InteractionType::ApplicationCommand => {
-            todo!("implement ApplicationCommand")
+            match interaction.data {
+                Some(
+                    ApplicationCommandInteractionData {
+                        id,
+                        name,
+                        options,
+                    },
+                ) => {
+                    info!(
+                        %id,
+                        %name, "handling ApplicationCommand"
+                    );
+                    match name.as_str() {
+                        "role" => {
+                            Ok(InteractionResponse{
+                                interaction_response_type: InteractionResponseType::ChannelMessageWithSource,
+                                data: Some(InteractionApplicationCommandCallbackData {
+                                    tts: None,
+                                    content: Some("received role command".to_string()),
+                                    flags: None
+                                })
+                            }.into_response())
+                        }
+                        _ => {
+                            error!(
+                                %id,
+                                %name,
+                                ?options,
+                                "unknown command"
+                            );
+                            Ok(InteractionResponse{
+                                interaction_response_type: InteractionResponseType::ChannelMessageWithSource,
+                                data: Some(InteractionApplicationCommandCallbackData{
+                                    tts: None,
+                                    content: Some(format!("received unknown command: {}", name)),
+                                    flags: None
+                                })
+                            }.into_response())
+                        }
+                    }
+                }
+
+                _ => {
+                    error!(
+                        ?interaction,
+                        "something is wrong"
+                    );
+                    Ok(InteractionResponse{ interaction_response_type: InteractionResponseType::ChannelMessageWithSource,
+                        data: Some(InteractionApplicationCommandCallbackData{
+                            tts: None,
+                            content: Some("Something went wrong when processing interaction".to_string()),
+                            flags: None
+                        })
+                    }.into_response())
+                }
+            }
         }
     }
 }
@@ -129,6 +184,7 @@ pub fn validate_discord_signature(
 struct Interaction {
     #[serde(rename = "type")]
     interaction_type: InteractionType,
+    data: Option<ApplicationCommandInteractionData>,
 }
 
 #[derive(Deserialize_repr, Debug)]
@@ -136,6 +192,42 @@ struct Interaction {
 pub enum InteractionType {
     Ping = 1,
     ApplicationCommand = 2,
+}
+
+type Snowflake = String;
+#[derive(Debug, Deserialize)]
+struct ApplicationCommandInteractionData {
+    id: Snowflake,
+    name: String,
+    //resolved: Option<ApplicationCommandInteractionDataResolved>
+    options: Option<
+        Vec<ApplicationCommandInteractionDataOption>,
+    >,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApplicationCommandInteractionDataOption {
+    name: String,
+    #[serde(rename = "type")]
+    option_type: ApplicationCommandOptionType,
+    // the value of the pair
+    value: Option<String>,
+    // present if this option is a group or subcommand
+    options: Option<
+        Vec<ApplicationCommandInteractionDataOption>,
+    >,
+}
+#[derive(Deserialize_repr, Debug)]
+#[repr(u8)]
+enum ApplicationCommandOptionType {
+    SUBCOMMAND = 1,
+    SUBCOMMANDGROUP = 2,
+    STRING = 3,
+    INTEGER = 4,
+    BOOLEAN = 5,
+    USER = 6,
+    CHANNEL = 7,
+    ROLE = 8,
 }
 
 #[derive(Serialize, Debug)]
